@@ -6,33 +6,31 @@ on:
 jobs:
   macos-vnc:
     runs-on: macos-latest
-    # macOS runners are more expensive in GitHub Actions minutes; 
-    # ensure you monitor your usage.
     timeout-minutes: 3600 
 
     steps:
       - name: Set Runner Password
         run: |
-          # Generate a secure password
-          PASSWORD=$(openssl rand -base64 12)
-          echo "VNC_PASSWORD=$PASSWORD" >> $GITHUB_ENV
-          
-          # Force the password change using sysadminctl
-          # This avoids the "eDSAuthFailed" old password prompt
-          sudo sysadminctl -adminUser runner -adminPassword "" -password "$PASSWORD" || \
-          sudo dscl . -passwd /Users/runner "$PASSWORD"
+          # HARDCODED PASSWORD: Change 'Mypassword123!' to whatever you like
+          # Using sysadminctl to ensure it works without knowing the "old" password
+          sudo sysadminctl -adminUser runner -adminPassword "" -password "Mypassword123!"
 
       - name: Enable Screen Sharing (VNC)
         run: |
-          # Enable Remote Management and Screen Sharing
+          # 1. Activate and allow all users
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on \
-            -clientopts -setvncpasswd -vncpasswd $(openssl rand -base64 8) \
-            -restart -agent -privs -all
-          
-          # Explicitly allow Screen Sharing through the firewall
-          sudo /usr/libexec/ApplicationFirewall/socketfilterproxy --add /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/MacOS/ARDAgent
-          sudo /usr/libexec/ApplicationFirewall/socketfilterproxy --blockapp /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/MacOS/ARDAgent -0
+            -activate -configure -allowAccessFor -allUsers -privs -all
+
+          # 2. Set the VNC password specifically (matching the one above)
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -clientopts -setvncpw -vncpw "Mypassword123!"
+
+          # 3. Restart the agent
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -restart -agent
+
+          # 4. Disable firewall to prevent connection blocks
+          sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0
 
       - name: Install Tailscale
         run: |
@@ -42,7 +40,6 @@ jobs:
         run: |
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mac-$(date +%s)
           
-          # Loop until IP is assigned
           TS_IP=""
           while [ -z "$TS_IP" ]; do
             TS_IP=$(tailscale ip -4)
@@ -56,12 +53,12 @@ jobs:
           echo "ACCESS INFO"
           echo "Address: vnc://${{ env.TAILSCALE_IP }}"
           echo "User: runner"
-          echo "Password: ${{ env.VNC_PASSWORD }}"
+          echo "Password: Mypassword123!"
           echo "--------------------------------------"
 
       - name: Keep Alive
         run: |
           while true; do
-            echo "Keep-alive: $(date)"
+            echo "Runner is active... Connect via VNC now."
             sleep 300
           done
