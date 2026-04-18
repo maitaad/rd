@@ -13,10 +13,13 @@ jobs:
     steps:
       - name: Set Runner Password
         run: |
-          # The default runner user has no password. Screen Sharing requires one.
-          # Replacing 'Runner123!' with a generated one for security.
+          # Generate a secure password
           PASSWORD=$(openssl rand -base64 12)
           echo "VNC_PASSWORD=$PASSWORD" >> $GITHUB_ENV
+          
+          # Force the password change using sysadminctl
+          # This avoids the "eDSAuthFailed" old password prompt
+          sudo sysadminctl -adminUser runner -adminPassword "" -password "$PASSWORD" || \
           sudo dscl . -passwd /Users/runner "$PASSWORD"
 
       - name: Enable Screen Sharing (VNC)
