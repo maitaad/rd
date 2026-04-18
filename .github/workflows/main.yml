@@ -11,54 +11,69 @@ jobs:
     steps:
       - name: Set Runner Password
         run: |
-          # HARDCODED PASSWORD: Change 'Mypassword123!' to whatever you like
-          # Using sysadminctl to ensure it works without knowing the "old" password
-          sudo sysadminctl -adminUser runner -adminPassword "" -password "Mypassword123!"
+          # Setting a hardcoded password for the 'runner' user
+          # This is required for the macOS login screen
+          PASSWORD="Mypassword123!"
+          sudo sysadminctl -adminUser runner -adminPassword "" -password "$PASSWORD"
+          echo "VNC_PASS=$PASSWORD" >> $GITHUB_ENV
 
       - name: Enable Screen Sharing (VNC)
         run: |
-          # 1. Activate and allow all users
+          # 1. Activate Remote Management
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -allowAccessFor -allUsers -privs -all
 
-          # 2. Set the VNC password specifically (matching the one above)
+          # 2. Configure VNC password (the fixed flag is -setvncpw)
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -clientopts -setvncpw -vncpw "Mypassword123!"
 
-          # 3. Restart the agent
+          # 3. Restart the agent to apply changes
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -restart -agent
 
-          # 4. Disable firewall to prevent connection blocks
+          # 4. Turn off the Application Firewall
           sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0
 
       - name: Install Tailscale
         run: |
-          curl -fsSL https://tailscale.com/install.sh | sh
+          # Use brew for a more reliable path integration on macOS runners
+          brew install tailscale
+          # Start the Tailscale background daemon
+          sudo tailscale install-system-daemon
 
       - name: Establish Tailscale Connection
         run: |
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mac-$(date +%s)
-          
+          # Use sudo for 'up' and provide the full path to be safe
+          sudo /usr/local/bin/tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mac-runner
+
+          # Extract IP
           TS_IP=""
-          while [ -z "$TS_IP" ]; do
-            TS_IP=$(tailscale ip -4)
-            sleep 2
+          for i in {1..10}; do
+            TS_IP=$(/usr/local/bin/tailscale ip -4)
+            if [ -n "$TS_IP" ]; then break; fi
+            sleep 5
           done
+
+          if [ -z "$TS_IP" ]; then
+            echo "Failed to get Tailscale IP"
+            exit 1
+          fi
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
 
       - name: Connection Details
         run: |
-          echo "--------------------------------------"
+          echo "------------------------------------------"
           echo "ACCESS INFO"
-          echo "Address: vnc://${{ env.TAILSCALE_IP }}"
-          echo "User: runner"
-          echo "Password: Mypassword123!"
-          echo "--------------------------------------"
+          echo "VNC Address: vnc://${{ env.TAILSCALE_IP }}"
+          echo "Username:    runner"
+          echo "Password:    Mypassword123!"
+          echo "------------------------------------------"
+          echo "Use 'Screen Sharing' on Mac or 'RealVNC' on Windows."
 
       - name: Keep Alive
         run: |
+          # Prevents the runner from shutting down
           while true; do
-            echo "Runner is active... Connect via VNC now."
+            echo "Session Active... $(date)"
             sleep 300
           done
