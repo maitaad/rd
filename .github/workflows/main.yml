@@ -11,11 +11,8 @@ jobs:
     steps:
       - name: Set Runner Password
         run: |
-          # Setting a hardcoded password for the 'runner' user
-          # This is required for the macOS login screen
-          PASSWORD="Mypassword123!"
-          sudo sysadminctl -adminUser runner -adminPassword "" -password "$PASSWORD"
-          echo "VNC_PASS=$PASSWORD" >> $GITHUB_ENV
+          # Use sysadminctl to force the password for the 'runner' user
+          sudo sysadminctl -adminUser runner -adminPassword "" -password "Mypassword123!"
 
       - name: Enable Screen Sharing (VNC)
         run: |
@@ -23,34 +20,36 @@ jobs:
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -allowAccessFor -allUsers -privs -all
 
-          # 2. Configure VNC password (the fixed flag is -setvncpw)
+          # 2. Configure VNC password
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -clientopts -setvncpw -vncpw "Mypassword123!"
 
-          # 3. Restart the agent to apply changes
+          # 3. Restart the agent
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -restart -agent
 
-          # 4. Turn off the Application Firewall
+          # 4. Disable Firewall
           sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0
 
       - name: Install Tailscale
         run: |
-          # Use brew for a more reliable path integration on macOS runners
           brew install tailscale
-          # Start the Tailscale background daemon
-          sudo tailscale install-system-daemon
+          # Start the background daemon using brew services (correct for Mac)
+          sudo brew services start tailscale
+          # Give the daemon a moment to initialize
+          sleep 5
 
       - name: Establish Tailscale Connection
         run: |
-          # Use sudo for 'up' and provide the full path to be safe
-          sudo /usr/local/bin/tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mac-runner
+          # Use the absolute path for Apple Silicon (/opt/homebrew/bin/tailscale)
+          sudo /opt/homebrew/bin/tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mac-runner
 
-          # Extract IP
+          # Extract IP with retries
           TS_IP=""
-          for i in {1..10}; do
-            TS_IP=$(/usr/local/bin/tailscale ip -4)
+          for i in {1..12}; do
+            TS_IP=$(/opt/homebrew/bin/tailscale ip -4)
             if [ -n "$TS_IP" ]; then break; fi
+            echo "Waiting for Tailscale IP..."
             sleep 5
           done
 
@@ -68,12 +67,10 @@ jobs:
           echo "Username:    runner"
           echo "Password:    Mypassword123!"
           echo "------------------------------------------"
-          echo "Use 'Screen Sharing' on Mac or 'RealVNC' on Windows."
 
       - name: Keep Alive
         run: |
-          # Prevents the runner from shutting down
           while true; do
-            echo "Session Active... $(date)"
+            echo "Runner is active. Connect now."
             sleep 300
           done
