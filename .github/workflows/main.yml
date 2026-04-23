@@ -6,71 +6,59 @@ on:
 jobs:
   macos-vnc:
     runs-on: macos-latest
+    # macOS runners are more expensive in GitHub Actions minutes; 
+    # ensure you monitor your usage.
     timeout-minutes: 3600 
 
     steps:
       - name: Set Runner Password
         run: |
-          # Use sysadminctl to force the password for the 'runner' user
-          sudo sysadminctl -adminUser runner -adminPassword "" -password "Mypassword123!"
+          # The default runner user has no password. Screen Sharing requires one.
+          # Replacing 'Runner123!' with a generated one for security.
+          PASSWORD=$(openssl rand -base64 12)
+          echo "VNC_PASSWORD=$PASSWORD" >> $GITHUB_ENV
+          sudo dscl . -passwd /Users/runner "$PASSWORD"
 
       - name: Enable Screen Sharing (VNC)
         run: |
-          # 1. Activate Remote Management
+          # Enable Remote Management and Screen Sharing
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -allowAccessFor -allUsers -privs -all
-
-          # 2. Configure VNC password
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvncpw -vncpw "Mypassword123!"
-
-          # 3. Restart the agent
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -restart -agent
-
-          # 4. Disable Firewall
-          sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0
+            -activate -configure -access -on \
+            -clientopts -setvncpasswd -vncpasswd $(openssl rand -base64 8) \
+            -restart -agent -privs -all
+          
+          # Explicitly allow Screen Sharing through the firewall
+          sudo /usr/libexec/ApplicationFirewall/socketfilterproxy --add /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/MacOS/ARDAgent
+          sudo /usr/libexec/ApplicationFirewall/socketfilterproxy --blockapp /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/MacOS/ARDAgent -0
 
       - name: Install Tailscale
         run: |
-          brew install tailscale
-          # Start the background daemon using brew services (correct for Mac)
-          sudo brew services start tailscale
-          # Give the daemon a moment to initialize
-          sleep 5
+          curl -fsSL https://tailscale.com/install.sh | sh
 
       - name: Establish Tailscale Connection
         run: |
-          # Use the absolute path for Apple Silicon (/opt/homebrew/bin/tailscale)
-          sudo /opt/homebrew/bin/tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mac-runner
-
-          # Extract IP with retries
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mac-$(date +%s)
+          
+          # Loop until IP is assigned
           TS_IP=""
-          for i in {1..12}; do
-            TS_IP=$(/opt/homebrew/bin/tailscale ip -4)
-            if [ -n "$TS_IP" ]; then break; fi
-            echo "Waiting for Tailscale IP..."
-            sleep 5
+          while [ -z "$TS_IP" ]; do
+            TS_IP=$(tailscale ip -4)
+            sleep 2
           done
-
-          if [ -z "$TS_IP" ]; then
-            echo "Failed to get Tailscale IP"
-            exit 1
-          fi
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
 
       - name: Connection Details
         run: |
-          echo "------------------------------------------"
+          echo "--------------------------------------"
           echo "ACCESS INFO"
-          echo "VNC Address: vnc://${{ env.TAILSCALE_IP }}"
-          echo "Username:    runner"
-          echo "Password:    Mypassword123!"
-          echo "------------------------------------------"
+          echo "Address: vnc://${{ env.TAILSCALE_IP }}"
+          echo "User: runner"
+          echo "Password: ${{ env.VNC_PASSWORD }}"
+          echo "--------------------------------------"
 
       - name: Keep Alive
         run: |
           while true; do
-            echo "Runner is active. Connect now."
+            echo "Keep-alive: $(date)"
             sleep 300
           done
